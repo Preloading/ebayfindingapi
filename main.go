@@ -138,20 +138,44 @@ func FindItemsAdvancedRequest(c *fiber.Ctx) error {
 				CategoryId:   itemSummary.Categories[0].CategoryId,
 				CategoryName: itemSummary.Categories[0].CategoryName,
 			},
+			SecondaryCategory: func() findingapistructs.Category {
+				if len(itemSummary.Categories) < 2 {
+					return findingapistructs.Category{
+						CategoryId:   itemSummary.Categories[1].CategoryId,
+						CategoryName: itemSummary.Categories[1].CategoryName,
+					}
+				}
+				return findingapistructs.Category{}
+			}(),
 			GalleryURL:  itemSummary.Image.ImageUrl,
 			ViewItemURL: itemSummary.ItemWebUrl,
 			AutoPay:     false, // figue dis out
 			PostalCode:  itemSummary.ItemLocation.PostalCode,
 			//Location:    itemSummary.ItemLocation.City, // City might be unavailible
 			Country: itemSummary.ItemLocation.Country,
-			// ShippingInfo: findingapistructs.ShippingInfo{ // seems kinda finicky
-			// 	ShippingType: itemSummary.ShippingOptions[0].ShippingCostType,
-			// 	ShippingServiceCost: findingapistructs.Amount{
-			// 		CurrencyId: itemSummary.ShippingOptions[0].ShippingCost.Currency,
-			// 		Value:      itemSummary.ShippingOptions[0].ShippingCost.Value,
-			// 	},
-			// },
+			ShippingInfo: findingapistructs.ShippingInfo{ // seems kinda finicky
+				ShippingType: func() string { // This could be done better
+					if len(itemSummary.ShippingOptions) == 0 {
+						return "NotSpecified"
+					}
+					if itemSummary.ShippingOptions[0].ShippingCost.Currency == "" {
+						return "Free"
+					}
+					if itemSummary.ShippingOptions[0].ShippingCostType == "FLAT" {
+						return "Flat"
+					}
+					if itemSummary.ShippingOptions[0].ShippingCostType == "CALCULATED" {
+						return "Calculated"
+					}
+					return "NotSpecified"
+				}(),
+				ShippingServiceCost: findingapistructs.Amount{
+					CurrencyId: itemSummary.ShippingOptions[0].ShippingCost.Currency,
+					Value:      itemSummary.ShippingOptions[0].ShippingCost.Value,
+				},
+			},
 			SellingStatus: findingapistructs.SellingStatus{
+				BidCount: itemSummary.BidCount,
 				CurrentPrice: findingapistructs.Amount{
 					CurrencyId: itemSummary.Price.Currency,
 					Value:      itemSummary.Price.Value,
@@ -205,7 +229,54 @@ func FindItemsAdvancedRequest(c *fiber.Ctx) error {
 				}(),
 			},
 			ListingInfo: findingapistructs.ListingInfo{
-				ListingType: itemSummary.BuyingOptions[0],
+				BuyItNowAvailable: (Contains(itemSummary.BuyingOptions, "AUCTION") || Contains(itemSummary.BuyingOptions, "BEST_OFFER")) && Contains(itemSummary.BuyingOptions, "FIXED_PRICE"),
+				BuyItNowPrice: func() findingapistructs.Amount {
+					if (Contains(itemSummary.BuyingOptions, "AUCTION") || Contains(itemSummary.BuyingOptions, "BEST_OFFER")) && Contains(itemSummary.BuyingOptions, "FIXED_PRICE") {
+						return findingapistructs.Amount{
+							CurrencyId: itemSummary.Price.Currency,
+							Value:      itemSummary.Price.Value,
+						}
+					}
+					return findingapistructs.Amount{}
+				}(),
+				ConvertedBuyItNowPrice: func() findingapistructs.Amount {
+					if (Contains(itemSummary.BuyingOptions, "AUCTION") || Contains(itemSummary.BuyingOptions, "BEST_OFFER")) && Contains(itemSummary.BuyingOptions, "FIXED_PRICE") {
+						if itemSummary.Price.ConvertedFromCurrency == "" {
+							return findingapistructs.Amount{
+								CurrencyId: itemSummary.Price.Currency,
+								Value:      itemSummary.Price.Value,
+							}
+						}
+						return findingapistructs.Amount{
+							CurrencyId: itemSummary.Price.ConvertedFromCurrency,
+							Value:      itemSummary.Price.ConvertedFromValue,
+						}
+					}
+					return findingapistructs.Amount{}
+				}(),
+				BestOfferEnabled: Contains(itemSummary.BuyingOptions, "BEST_OFFER"),
+				ListingType: func() string {
+					buyItNow := false
+					if Contains(itemSummary.BuyingOptions, "FIXED_PRICE") {
+						buyItNow = true
+					}
+					if (Contains(itemSummary.BuyingOptions, "AUCTION") || Contains(itemSummary.BuyingOptions, "BEST_OFFER")) && buyItNow {
+						return "AuctionWithBIN"
+					}
+					if buyItNow {
+						return "FixedPrice"
+					}
+					if Contains(itemSummary.BuyingOptions, "AUCTION") {
+						return "Auction"
+					}
+					if Contains(itemSummary.BuyingOptions, "BEST_OFFER") {
+						return "Auction"
+					}
+					if Contains(itemSummary.BuyingOptions, "CLASSIFIED") {
+						return "Classified"
+					}
+					return "Unknown"
+				}(),
 				StartTime: func() time.Time {
 					// If we have an end time, use the actual item creation date
 					if itemSummary.ItemEndDate != "" {
@@ -321,4 +392,14 @@ func FindItemsAdvancedRequest(c *fiber.Ctx) error {
 	return c.SendString("<?xml version='1.0' encoding='UTF-8'?>\n" + string(result))
 
 	//return c.SendString(string(body))
+}
+
+// helper function courtesy of Github Copilot
+func Contains[T comparable](arr []T, element T) bool {
+	for _, v := range arr {
+		if v == element {
+			return true
+		}
+	}
+	return false
 }
